@@ -70,32 +70,49 @@ async function onAck(id, button, slot) {
   }
 }
 
-// R1: keyed update, so rows that are already on screen (and their Ack buttons) stay put.
-function render(incidents) {
-  const sorted = [...incidents].sort((a, b) => Date.parse(b.openedAt) - Date.parse(a.openedAt));
-  const seen = new Set();
-  let prev = null;
-  for (const i of sorted) {
-    seen.add(i.id);
-    let row = rows.get(i.id);
-    if (!row) {
-      row = buildRow(i);
-      rows.set(i.id, row);
-      if (loaded) row.classList.add('new');
-    }
-    const want = prev ? prev.nextSibling : list.firstChild;
-    if (row !== want) list.insertBefore(row, want);
-    prev = row;
-  }
-  for (const [id, row] of rows) {
-    if (!seen.has(id)) {
-      row.remove();
-      rows.delete(id);
-    }
-  }
-  empty.hidden = sorted.length > 0;
-  list.hidden = sorted.length === 0;
+const newBar = document.querySelector('[data-testid="new-bar"]');
+const pending = new Map();
+
+function byNewest(a, b) {
+  return Date.parse(b.openedAt) - Date.parse(a.openedAt);
 }
+
+// R1 (product, after step 1): rows on screen never move. New incidents wait in `pending` behind the
+// "N new" bar and go in at the top only when on-call clicks it.
+function insertAtTop(incidents) {
+  for (const i of [...incidents].sort(byNewest).reverse()) {
+    if (rows.has(i.id)) continue;
+    const row = buildRow(i);
+    rows.set(i.id, row);
+    if (loaded) row.classList.add('new');
+    list.prepend(row);
+  }
+  empty.hidden = rows.size > 0;
+  list.hidden = rows.size === 0;
+}
+
+function render(incidents) {
+  if (rows.size === 0) {
+    insertAtTop(incidents);
+    return;
+  }
+  for (const i of incidents) if (!rows.has(i.id)) pending.set(i.id, i);
+  showNewBar();
+}
+
+function showNewBar() {
+  const n = pending.size;
+  newBar.textContent = n === 1 ? '1 new incident' : `${n} new incidents`;
+  // The bar keeps its space when hidden, so showing it never moves the rows below.
+  newBar.style.visibility = n ? 'visible' : 'hidden';
+  newBar.disabled = n === 0;
+}
+
+newBar.addEventListener('click', () => {
+  insertAtTop([...pending.values()]);
+  pending.clear();
+  showNewBar();
+});
 
 function showStatus(text) {
   status.textContent = text;
